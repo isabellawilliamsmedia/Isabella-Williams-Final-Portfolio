@@ -121,20 +121,28 @@ body { overflow: hidden; background: #000; }
   background: rgba(0,0,0,0.55);
   display: none; align-items: center; justify-content: center;
   opacity: 0; transition: opacity 0.5s ease;
+  /* allow scrolling on tiny screens */
+  overflow-y: auto;
+  padding: 20px 16px;
 }
 #modal-overlay.visible { display: flex; }
 #modal-overlay.shown { opacity: 1; }
  
 .modal-card {
   background: #f8f6f1;
-  width: min(360px, 88vw);
-  padding: 52px 44px 44px;
+  width: min(360px, 100%);
+  padding: clamp(28px, 6vw, 52px) clamp(20px, 6vw, 44px) clamp(24px, 5vw, 44px);
   display: flex; flex-direction: column; align-items: center;
   gap: 0;
+  /* prevent it from ever being taller than the viewport */
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  /* keep it centred even when overlay is scrollable */
+  margin: auto;
 }
 .modal-title {
   font-family: 'Cormorant Garamond', 'Times New Roman', serif;
-  font-size: clamp(1.4rem, 3vw, 1.9rem);
+  font-size: clamp(1.2rem, 5vw, 1.9rem);
   font-weight: 700;
   color: #1a1a1a;
   letter-spacing: 0.14em;
@@ -147,13 +155,13 @@ body { overflow: hidden; background: #000; }
 }
 .modal-desc {
   font-family: 'Courier Prime', 'Courier New', monospace;
-  font-size: clamp(0.52rem, 0.9vw, 0.63rem);
+  font-size: clamp(0.6rem, 2.2vw, 0.63rem);
   letter-spacing: 0.22em;
   color: #555;
   text-transform: uppercase;
   text-align: center;
   line-height: 1.9;
-  margin-bottom: 36px;
+  margin-bottom: 28px;
 }
 .modal-desc strong {
   font-style: italic; font-weight: 700; color: #1a1a1a;
@@ -161,12 +169,12 @@ body { overflow: hidden; background: #000; }
 .modal-btn {
   display: block; width: 100%;
   font-family: 'Courier Prime', 'Courier New', monospace;
-  font-size: clamp(0.6rem, 1vw, 0.72rem);
+  font-size: clamp(0.62rem, 2.4vw, 0.72rem);
   letter-spacing: 0.3em;
   text-transform: uppercase;
   text-align: center;
   text-decoration: none;
-  padding: 14px 10px;
+  padding: clamp(11px, 3vw, 14px) 10px;
   cursor: pointer;
   border: 1px solid #1a1a1a;
   transition: background 0.18s, color 0.18s;
@@ -238,9 +246,18 @@ setTimeout(() => {
   }, 900);
 }, 2400);
  
-btnWeb.addEventListener('click', () => {
+btnWeb.addEventListener('click', (e) => {
+  e.stopPropagation();
   modalOverlay.classList.remove('shown');
   setTimeout(() => { modalOverlay.style.display = 'none'; }, 500);
+});
+ 
+document.querySelector('.modal-btn-light').addEventListener('click', (e) => {
+  e.stopPropagation();
+});
+ 
+document.getElementById('modal-overlay').addEventListener('click', (e) => {
+  e.stopPropagation();
 });
 /* ── END LOADING + MODAL LOGIC ── */
  
