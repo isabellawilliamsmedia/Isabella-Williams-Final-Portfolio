@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Portfolio Desk</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { overflow: hidden; background: #000; }
+#webgl { position: fixed; top: 0; left: 0; }
+#css3d { position: fixed; top: 0; left: 0; pointer-events: none; }
+#screen-el {
+  width: 640px; height: 480px;
+  background: #111; overflow: hidden; position: relative;
+  border-radius: 0;
+  isolation: isolate;
+  /* Border matched to TV bezel color, box-shadow feathers it softly outward */
+  border: 6px solid #0a0908;
+  box-shadow:
+    0 0 0 1px #0a0908,
+    0 0 8px  6px #090807,
+    0 0 20px 12px #070605,
+    0 0 38px 20px rgba(5,4,3,0.90),
+    0 0 60px 30px rgba(3,2,2,0.60);
+}
+/* Soft outer edge fade — replaces hard border, bleeds into the 3D bezel */
+#screen-el::after {
+  content: ''; position: absolute; inset: 0;
+  background:
+    /* scanlines */
+    repeating-linear-gradient(to bottom, transparent 0px, transparent 3px, rgba(0,0,0,0.10) 3px, rgba(0,0,0,0.10) 4px),
+    /* edge fade — all four sides, very gradual */
+    linear-gradient(to right,  rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.18) 7%, transparent 18%, transparent 82%, rgba(0,0,0,0.18) 93%, rgba(0,0,0,0.72) 100%),
+    linear-gradient(to bottom, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.18) 6%, transparent 16%, transparent 84%, rgba(0,0,0,0.18) 94%, rgba(0,0,0,0.72) 100%);
+  pointer-events: none; z-index: 5;
+}
+#screen-clip {
+  position: absolute;
+  inset: 0;
+  border-radius: 0;
+  overflow: hidden;
+  background: #111;
+}
+#screen-clip::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  /* Subtle inner vignette — softer than before, just darkens the corners gently */
+  background:
+    radial-gradient(ellipse 110% 110% at 50% 50%, transparent 55%, rgba(0,0,0,0.25) 100%),
+    /* corner deepening */
+    radial-gradient(ellipse 55% 55% at 0% 0%,   rgba(0,0,0,0.28) 0%, transparent 70%),
+    radial-gradient(ellipse 55% 55% at 100% 0%,  rgba(0,0,0,0.28) 0%, transparent 70%),
+    radial-gradient(ellipse 55% 55% at 0% 100%,  rgba(0,0,0,0.28) 0%, transparent 70%),
+    radial-gradient(ellipse 55% 55% at 100% 100%,rgba(0,0,0,0.28) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 10;
+}
+#screen-clip iframe {
+  width: 110%; height: 110%;
+  margin: -5%;
+  border: none; pointer-events: none; display: block;
+  filter: brightness(0.86) saturate(0.88) sepia(0.08);
+}
+#screen-el::before {
+  content: ''; position: absolute; inset: 0;
+  background:
+    /* subtle warm highlight top-left from scene light */
+    radial-gradient(ellipse 45% 35% at 18% 32%, rgba(255,248,230,0.10) 0%, transparent 60%);
+  pointer-events: none; z-index: 6;
+}
+#hint {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  color: rgba(255,255,255,0.5); font-family: monospace; font-size: 13px;
+  letter-spacing: 0.1em; pointer-events: none; transition: opacity 0.4s; z-index: 100;
+}
+</style>
+</head>
+<body>
+<canvas id="webgl"></canvas>
+<div id="css3d"></div>
+<div id="screen-el">
+  <div id="screen-clip">
+    <iframe id="iframe" src="https://isabellawilliamsportfolio.netlify.app/"
+      allowfullscreen="allowfullscreen" allow="fullscreen"></iframe>
+  </div>
+</div>
+<div id="hint">CLICK THE SCREEN TO ZOOM · CLICK AGAIN TO ZOOM OUT</div>
+ 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/renderers/CSS3DRenderer.js"></script>
+<script>
+ 
+ const STATE_REST = {
+  x: 0.87, y: -2.50, z: -5.00,
+  scaleW: 0.81, scaleH: 0.80,
+  tiltX: 0.00,
+  tiltY: 0.04,
+  camX: 0, camY: 18, camZ: 36,
+  lookX: 0, lookY: 4, lookZ: 0,
+};
+const STATE_ZOOM = {
+  x: 0.70, y: -1.10, z: -2.70,
+  scaleW: 0.87, scaleH: 0.86,
+  tiltX: 0.00,
+  tiltY: 0.07,
+  camX: 0.50, camY: 10.50, camZ: 13.50,
+  lookX: -0.50, lookY: 10.50, lookZ: -1.00,
+};
+ 
+const ZOOM_SPEED = 0.04;
+const IFRAME_W = 640, IFRAME_H = 480;
+ 
+const hint      = document.getElementById('hint');
+const screenEl  = document.getElementById('screen-el');
+const iframeEl  = document.getElementById('iframe');
+ 
+const scene    = new THREE.Scene(); scene.background = new THREE.Color(0x111111);
+const cssScene = new THREE.Scene();
+const camera   = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 1000);
+camera.position.set(STATE_REST.camX, STATE_REST.camY, STATE_REST.camZ);
+ 
+const renderer = new THREE.WebGLRenderer({ antialias: true, canvas: document.getElementById('webgl') });
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+ 
+const cssRenderer = new THREE.CSS3DRenderer();
+cssRenderer.setSize(innerWidth, innerHeight);
+cssRenderer.domElement.id = 'css3d';
+document.getElementById('css3d').replaceWith(cssRenderer.domElement);
+cssRenderer.domElement.style.pointerEvents = 'none';
+ 
+scene.add(new THREE.AmbientLight(0xfff8f0, 0.38));
+const dl = new THREE.DirectionalLight(0xfff4e0, 0.72);
+dl.position.set(-20,22,18); dl.castShadow=true;
+dl.shadow.mapSize.set(2048,2048); dl.shadow.radius=6; dl.shadow.bias=-0.0003;
+dl.shadow.camera.left=-60; dl.shadow.camera.right=60;
+dl.shadow.camera.top=60;   dl.shadow.camera.bottom=-60;
+dl.shadow.camera.near=1;   dl.shadow.camera.far=200;
+scene.add(dl);
+const fillLight = new THREE.DirectionalLight(0xffe0c0, 0.18);
+fillLight.position.set(25, 8, 10);
+scene.add(fillLight);
+ 
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(500,500), new THREE.MeshPhongMaterial({color:0x333333}));
+floor.rotation.x=-Math.PI/2; floor.position.y=-15; floor.receiveShadow=true; scene.add(floor);
+ 
+const wc=document.createElement('canvas'); wc.width=wc.height=512;
+const wx=wc.getContext('2d'); wx.fillStyle='#4a3820'; wx.fillRect(0,0,512,512);
+for(let r=0;r<4;r++) for(let c=0;c<4;c++){
+  const cx=c*128+64,cy=r*128+64;
+  [[66,'#8a7228'],[48,'#7a4515'],[28,'#4a2208']].forEach(([rr,col])=>{wx.beginPath();wx.arc(cx,cy,rr,0,Math.PI*2);wx.fillStyle=col;wx.fill();});
+}
+const wt=new THREE.CanvasTexture(wc);
+wt.wrapS=wt.wrapT=THREE.RepeatWrapping; wt.repeat.set(6,3.5);
+const wall=new THREE.Mesh(new THREE.PlaneGeometry(500,300),new THREE.MeshLambertMaterial({map:wt}));
+wall.position.z=-25; wall.receiveShadow=true; scene.add(wall);
+ 
+const tm=new THREE.MeshLambertMaterial({color:0x241512});
+const tbl=new THREE.Mesh(new THREE.BoxGeometry(80,2,45),tm);
+tbl.castShadow=tbl.receiveShadow=true; scene.add(tbl);
+[[-36,-8,12],[36,-8,12],[-36,-8,-12],[36,-8,-12]].forEach(p=>{
+  const leg=new THREE.Mesh(new THREE.BoxGeometry(4,15,4),tm);
+  leg.position.set(...p); leg.castShadow=leg.receiveShadow=true; scene.add(leg);
+});
+ 
+const cupGrp=new THREE.Group(); cupGrp.position.set(-21,2.2,13);
+const cupM=new THREE.MeshPhongMaterial({color:0xfaf0e6,shininess:60});
+cupGrp.add(new THREE.Mesh(new THREE.CylinderGeometry(1.8,1.4,3.5,32),cupM));
+const cof=new THREE.Mesh(new THREE.CylinderGeometry(1.55,1.55,.2,32),new THREE.MeshPhongMaterial({color:0x2b1200}));
+cof.position.y=1.6; cupGrp.add(cof);
+const hcv=new THREE.QuadraticBezierCurve3(new THREE.Vector3(1.6,.8,0),new THREE.Vector3(3.2,0,0),new THREE.Vector3(1.6,-.8,0));
+cupGrp.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(hcv.getPoints(20)),20,.22,8,false),cupM));
+const sau=new THREE.Mesh(new THREE.CylinderGeometry(2.8,2.4,.35,32),cupM); sau.position.y=-1.95; cupGrp.add(sau);
+cupGrp.traverse(n=>{if(n.isMesh){n.castShadow=n.receiveShadow=true;}}); scene.add(cupGrp);
+const coaster=new THREE.Mesh(new THREE.CylinderGeometry(3.2,3.2,.25,32),new THREE.MeshPhongMaterial({color:0x050e05}));
+coaster.position.set(-21,1.15,13); scene.add(coaster);
+const stPtcls=[];
+for(let i=0;i<7;i++){
+  const p=new THREE.Mesh(new THREE.SphereGeometry(.35,8,8),new THREE.MeshPhongMaterial({color:0xffffff,transparent:true,opacity:.18,depthWrite:false}));
+  p.userData={offset:i*.42,xW:(Math.random()-.5)*.8};
+  p.position.set(cupGrp.position.x,cupGrp.position.y+2.2,cupGrp.position.z);
+  scene.add(p); stPtcls.push(p);
+}
+ 
+const plantG=new THREE.Group(); plantG.position.set(28,1,-12);
+plantG.add(new THREE.Mesh(new THREE.CylinderGeometry(2,1.5,3,16),new THREE.MeshPhongMaterial({color:0x8B3A0F})));
+const soil=new THREE.Mesh(new THREE.CylinderGeometry(1.9,1.9,.3,16),new THREE.MeshLambertMaterial({color:0x3b1f0a}));
+soil.position.y=1.55; plantG.add(soil);
+const leafM=new THREE.MeshPhongMaterial({color:0x0d2e0d,side:THREE.DoubleSide});
+[0,45,90,135,180,225,270,315].forEach((deg,fi)=>{
+  const r=deg*Math.PI/180,len=8+(fi%3)*1.2;
+  for(let j=0;j<9;j++){const t=(j+1)/9;[-1,1].forEach(s=>{
+    const lf=new THREE.Mesh(new THREE.SphereGeometry(.28,5,5),leafM);
+    lf.position.set(Math.sin(r)*t*len*.55+Math.cos(r)*s*.55*(1-t*.4),1.6+t*4.5-t*t*3.8,Math.cos(r)*t*len*.55-Math.sin(r)*s*.55*(1-t*.4));
+    lf.scale.set(.4,.18,.9); plantG.add(lf);
+  });}
+});
+plantG.traverse(n=>{if(n.isMesh){n.castShadow=n.receiveShadow=true;}}); scene.add(plantG);
+ 
+const markG=new THREE.Group(); markG.position.set(22,1.2,12); markG.rotation.z=Math.PI/2; markG.rotation.y=-0.45; markG.scale.setScalar(.7);
+const bkM=new THREE.MeshPhongMaterial({color:0x111111,shininess:80});
+[{geo:new THREE.CylinderGeometry(.45,.45,7,16),mat:bkM,y:0},
+ {geo:new THREE.CylinderGeometry(.48,.48,1.4,16),mat:bkM,y:4},
+ {geo:new THREE.CylinderGeometry(.47,.47,.4,16),mat:new THREE.MeshPhongMaterial({color:0x888888}),y:2.8},
+ {geo:new THREE.CylinderGeometry(.15,.05,1,8),mat:new THREE.MeshPhongMaterial({color:0x222222}),y:-3.8}
+].forEach(({geo,mat,y})=>{const m=new THREE.Mesh(geo,mat);m.position.y=y;m.castShadow=true;markG.add(m);});
+scene.add(markG);
+ 
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.05;
+controls.target.set(STATE_REST.lookX, STATE_REST.lookY, STATE_REST.lookZ);
+controls.update();
+ 
+let isZoomed   = false;
+let g_computer = null;
+let lerpT      = 0;
+ 
+const css3dObj = new THREE.CSS3DObject(screenEl);
+cssScene.add(css3dObj);
+const holeMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(1,1),
+  new THREE.MeshBasicMaterial({color:0x000000})
+);
+scene.add(holeMesh);
+ 
+let g_screenCentre = new THREE.Vector3();
+let g_screenNormal = new THREE.Vector3(0,0,1);
+let g_screenQuat   = new THREE.Quaternion();
+let g_screenW = 10, g_screenH = 7.5;
+ 
+function fitScreenToMesh(computer) {
+  computer.updateMatrixWorld(true);
+  const candidates=[];
+  computer.traverse(node=>{
+    if(!node.isMesh) return;
+    const bbox=new THREE.Box3().setFromObject(node);
+    const size=new THREE.Vector3(); bbox.getSize(size);
+    const ctr=new THREE.Vector3(); bbox.getCenter(ctr);
+    const dims=[size.x,size.y,size.z].sort((a,b)=>a-b);
+    candidates.push({node,size,ctr,flatness:dims[0]/(dims[2]||1)});
+  });
+  const compBox=new THREE.Box3().setFromObject(computer);
+  const compCtr=new THREE.Vector3(); compBox.getCenter(compCtr);
+  candidates.sort((a,b)=>a.flatness-b.flatness);
+  let best=null;
+  for(const c of candidates){
+    if(c.flatness>0.15) break;
+    if(c.ctr.y<compCtr.y) continue;
+    const dims=[c.size.x,c.size.y,c.size.z].sort((a,b)=>b-a);
+    if(dims[0]/(dims[1]||1)<0.6||dims[0]/(dims[1]||1)>2.5) continue;
+    best=c; break;
+  }
+  if(best){
+    const s=best.size;
+    let na='z';
+    if(s.x<s.y&&s.x<s.z) na='x';
+    else if(s.y<s.x&&s.y<s.z) na='y';
+    const dirs={x:[new THREE.Vector3(1,0,0),new THREE.Vector3(-1,0,0)],y:[new THREE.Vector3(0,1,0),new THREE.Vector3(0,-1,0)],z:[new THREE.Vector3(0,0,1),new THREE.Vector3(0,0,-1)]};
+    let bn=null,bd=-Infinity;
+    for(const v of dirs[na]){const d=v.dot(new THREE.Vector3(0,0,1));if(d>bd){bd=d;bn=v.clone();}}
+    g_screenNormal.copy(bn);
+    g_screenCentre.copy(best.ctr);
+    if(na==='z'){g_screenW=best.size.x;g_screenH=best.size.y;}
+    if(na==='x'){g_screenW=best.size.z;g_screenH=best.size.y;}
+    if(na==='y'){g_screenW=best.size.x;g_screenH=best.size.z;}
+    g_screenQuat.setFromUnitVectors(new THREE.Vector3(0,0,1),g_screenNormal);
+  } else {
+    const box=new THREE.Box3().setFromObject(computer);
+    const ctr=new THREE.Vector3(); box.getCenter(ctr);
+    const size=new THREE.Vector3(); box.getSize(size);
+    g_screenCentre.set(ctr.x,box.min.y+size.y*0.68,ctr.z+size.z*0.05);
+    g_screenNormal.set(0,0,1);
+    g_screenW=size.x*0.38; g_screenH=g_screenW*0.75;
+    g_screenQuat.identity();
+  }
+}
+ 
+function applyT(t) {
+  const L = THREE.MathUtils.lerp;
+  const x      = L(STATE_REST.x,      STATE_ZOOM.x,      t);
+  const y      = L(STATE_REST.y,      STATE_ZOOM.y,      t);
+  const z      = L(STATE_REST.z,      STATE_ZOOM.z,      t);
+  const scaleW = L(STATE_REST.scaleW, STATE_ZOOM.scaleW, t);
+  const scaleH = L(STATE_REST.scaleH, STATE_ZOOM.scaleH, t);
+  const tiltX  = L(STATE_REST.tiltX,  STATE_ZOOM.tiltX,  t);
+  const tiltY  = L(STATE_REST.tiltY,  STATE_ZOOM.tiltY,  t);
+  css3dObj.scale.set((g_screenW*scaleW)/IFRAME_W, (g_screenH*scaleH)/IFRAME_H, 1);
+  css3dObj.position.set(g_screenCentre.x+x, g_screenCentre.y+y, g_screenCentre.z+z);
+  css3dObj.rotation.set(tiltX, tiltY, 0);
+  holeMesh.geometry.dispose();
+  holeMesh.geometry = new THREE.PlaneGeometry(g_screenW*scaleW, g_screenH*scaleH);
+  holeMesh.position.copy(css3dObj.position);
+  holeMesh.rotation.set(tiltX, tiltY, 0);
+  holeMesh.position.addScaledVector(g_screenNormal, 0.08);
+  camera.position.set(
+    L(STATE_REST.camX,  STATE_ZOOM.camX,  t),
+    L(STATE_REST.camY,  STATE_ZOOM.camY,  t),
+    L(STATE_REST.camZ,  STATE_ZOOM.camZ,  t)
+  );
+  controls.target.set(
+    L(STATE_REST.lookX, STATE_ZOOM.lookX, t),
+    L(STATE_REST.lookY, STATE_ZOOM.lookY, t),
+    L(STATE_REST.lookZ, STATE_ZOOM.lookZ, t)
+  );
+}
+ 
+function ease(t) { return t<0.5 ? 2*t*t : -1+(4-2*t)*t; }
+ 
+const loader = new THREE.GLTFLoader();
+loader.load(
+  'https://raw.githubusercontent.com/isabellawilliamsmedia/3d-computer/main/commodore_64__computer_full_pack.glb',
+  gltf => {
+    g_computer = gltf.scene;
+    g_computer.scale.set(5,5,5);
+    g_computer.position.set(0,1,0);
+    g_computer.rotation.y = 220;
+    g_computer.traverse(n => { if(n.isMesh){ n.castShadow=n.receiveShadow=true; } });
+    scene.add(g_computer);
+    fitScreenToMesh(g_computer);
+    applyT(0);
+  },
+  xhr => {},
+  err => { console.error('Load error:', err); }
+);
+ 
+window.addEventListener('click', e => {
+  if (!g_computer) return;
+  const m   = new THREE.Vector2((e.clientX/innerWidth)*2-1, -(e.clientY/innerHeight)*2+1);
+  const ray = new THREE.Raycaster(); ray.setFromCamera(m, camera);
+  if (!ray.intersectObjects([g_computer, holeMesh], true).length) return;
+  isZoomed = !isZoomed;
+  controls.enabled = false;
+  document.getElementById('screen-clip').style.pointerEvents = isZoomed ? 'auto' : 'none';
+  iframeEl.style.pointerEvents = isZoomed ? 'auto' : 'none';
+  cssRenderer.domElement.style.pointerEvents = isZoomed ? 'auto' : 'none';
+  hint.style.opacity = isZoomed ? '0' : '1';
+});
+ 
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight); cssRenderer.setSize(innerWidth, innerHeight);
+});
+ 
+function animate() {
+  requestAnimationFrame(animate);
+  const targetT = isZoomed ? 1 : 0;
+  lerpT += (targetT - lerpT) * ZOOM_SPEED;
+  if (g_computer) applyT(ease(lerpT));
+  const t = Date.now() * .001;
+  stPtcls.forEach((p, i) => {
+    const c = (t*.5 + p.userData.offset) % 1;
+    p.position.x = cupGrp.position.x + Math.sin(t*1.2+i)*.4 + p.userData.xW*c;
+    p.position.y = cupGrp.position.y + 2.0 + c*4.5;
+    p.position.z = cupGrp.position.z;
+    p.scale.setScalar(.5 + c*1.8);
+    p.material.opacity = c<0.2 ? c*.9 : (1-c)*.22;
+  });
+  controls.update();
+  renderer.render(scene, camera);
+  cssRenderer.render(cssScene, camera);
+}
+animate();
+</script>
+</body>
+</html>
